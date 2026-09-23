@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# Secrets. Never commit a become/sudo password.
+#
+# If you get tired of typing --ask-become-pass, put ansible_become_pass in an
+# ansible-vault encrypted file -- do NOT put it in plain group_vars.
+# ---------------------------------------------------------------------------
+*vault*
+vault.yml
+*.vault
+secrets.yml
+group_vars/*/vault*
+host_vars/*/vault*
+
+# Private keys, in case one ever lands here by accident
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Ansible runtime noise
+*.retry
+.ansible/
+ansible.log
+fact_cache/
+
+# Python virtualenvs, if you install ansible locally
+.venv/
+venv/
+__pycache__/
+
+# OS cruft
+.DS_Store
+Thumbs.db

@@ -1,0 +1,63 @@
+---
+# Post-run checks. Run on their own with:  --tags verify
+- name: Confirm cups and avahi are running
+  ansible.builtin.command: systemctl is-active {{ item }}
+  loop: [cups, avahi-daemon]
+  register: printserver_svc
+  changed_when: false
+  failed_when: printserver_svc.stdout != 'active'
+  check_mode: false
+
+- name: Confirm usblp is NOT loaded
+  ansible.builtin.command: grep -c '^usblp ' /proc/modules
+  register: printserver_usblp_check
+  changed_when: false
+  failed_when: printserver_usblp_check.stdout | int > 0
+  check_mode: false
+
+- name: Confirm the printer is present on the USB bus
+  ansible.builtin.shell:
+    cmd: set -o pipefail; lsusb | grep -ci '{{ printserver_usb_vendor_id }}'
+    executable: /bin/bash
+  register: printserver_usb_check
+  changed_when: false
+  failed_when: printserver_usb_check.stdout | int == 0
+  check_mode: false
+
+- name: Confirm the queue is idle and enabled
+  ansible.builtin.command: lpstat -p {{ printserver_queue }}
+  register: printserver_state
+  changed_when: false
+  failed_when: "'enabled' not in printserver_state.stdout"
+  check_mode: false
+
+- name: Confirm AirPrint/Mopria is advertised over mDNS
+  ansible.builtin.shell:
+    cmd: set -o pipefail; timeout 10 avahi-browse -rt _ipp._tcp 2>/dev/null | grep -c 'mopria-certified' || true
+    executable: /bin/bash
+  register: printserver_mdns
+  changed_when: false
+  failed_when: printserver_mdns.stdout | int == 0
+  check_mode: false
+
+- name: Confirm wifi power saving is off
+  ansible.builtin.command: iw dev {{ printserver_wifi_interface }} get power_save
+  register: printserver_ps
+  changed_when: false
+  failed_when: "'off' not in printserver_ps.stdout"
+  check_mode: false
+  when: printserver_disable_wifi_powersave
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "queue      : {{ printserver_state.stdout | trim }}"
+      - "mDNS       : advertised with mopria-certified + URF (AirPrint ready)"
+      - "usblp      : not loaded"
+      - "web UI     : http://{{ inventory_hostname }}:631"
+      - "admin      : https://{{ inventory_hostname }}:631/admin/ (user {{ printserver_admin_user }})"
+
+- name: Print a CUPS test page
+  ansible.builtin.command: lp -d {{ printserver_queue }} /usr/share/cups/data/testprint
+  when: printserver_test_page
+  changed_when: true

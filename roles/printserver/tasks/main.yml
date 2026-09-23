@@ -1,0 +1,219 @@
+---
+# ===========================================================================
+# Packages
+# ===========================================================================
+- name: Install CUPS, the brlaser driver and the mDNS stack
+  ansible.builtin.apt:
+    name: "{{ printserver_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ===========================================================================
+# usblp -- the single most important task in this role.
+#
+# Without this, everything else looks correct and printing still silently
+# hangs forever at "Sending data to printer".
+# ===========================================================================
+- name: Blacklist the usblp kernel module so CUPS can claim the printer
+  ansible.builtin.copy:
+    src: blacklist-usblp.conf
+    dest: /etc/modprobe.d/blacklist-usblp.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart cups
+
+- name: Check whether usblp is currently loaded
+  ansible.builtin.command: grep -q '^usblp ' /proc/modules
+  register: printserver_usblp
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Unload usblp now (the blacklist only takes effect at next boot)
+  ansible.builtin.command: rmmod usblp
+  when: printserver_usblp.rc == 0
+  notify: Restart cups
+
+# ===========================================================================
+# Services and admin access
+# ===========================================================================
+- name: Enable and start cups and avahi-daemon
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - cups
+    - avahi-daemon
+
+- name: Add the admin user to the lpadmin group
+  ansible.builtin.user:
+    name: "{{ printserver_admin_user }}"
+    groups: lpadmin
+    append: true
+  when: printserver_admin_user | length > 0
+
+- name: Read the current cupsd settings
+  ansible.builtin.command: cupsctl
+  register: printserver_cupsctl
+  changed_when: false
+  check_mode: false
+
+- name: Enable printer sharing, remote admin, the web UI and ServerAlias
+  ansible.builtin.command:
+    argv: "{{ ['cupsctl'] + printserver_cupsctl_args }}"
+  when: printserver_cupsctl_expect
+        | difference(printserver_cupsctl.stdout_lines)
+        | length > 0
+  notify: Restart cups
+
+# Handlers must run before we start talking to the queue below.
+- name: Apply any pending cupsd restart
+  ansible.builtin.meta: flush_handlers
+
+# ===========================================================================
+# Discover the printer
+# ===========================================================================
+- name: Discover the USB device URI
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      lpinfo -v | awk '{print $2}'
+      | grep -F -m1 -- '{{ printserver_usb_uri_match }}' || true
+    executable: /bin/bash
+  register: printserver_uri_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: printserver_device_uri | length == 0
+
+- name: Settle on the device URI to use
+  ansible.builtin.set_fact:
+    printserver_uri: >-
+      {{ printserver_device_uri if printserver_device_uri | length > 0
+         else (printserver_uri_probe.stdout | default('') | trim) }}
+
+- name: Fail with a useful message when no printer is attached
+  ansible.builtin.fail:
+    msg: >-
+      No USB device matching '{{ printserver_usb_uri_match }}' was found.
+      Check that the printer is plugged into the Pi AND powered on, then
+      confirm with `lsusb` (expect vendor 04f9 for Brother) and `lpinfo -v`.
+  when: printserver_uri | length == 0
+
+- name: Resolve the brlaser PPD for this model
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      lpinfo -m | grep -F -- '{{ printserver_ppd_match }}'
+      | awk '{print $1; exit}' || true
+    executable: /bin/bash
+  register: printserver_ppd_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: printserver_ppd | length == 0
+
+- name: Settle on the PPD to use
+  ansible.builtin.set_fact:
+    printserver_ppd_resolved: >-
+      {{ printserver_ppd if printserver_ppd | length > 0
+         else (printserver_ppd_probe.stdout | default('') | trim) }}
+
+- name: Fail when no matching driver is available
+  ansible.builtin.fail:
+    msg: >-
+      No CUPS driver matched '{{ printserver_ppd_match }}'. Check that
+      printer-driver-brlaser is installed and list candidates with
+      `lpinfo -m | grep -i brlaser`.
+  when: printserver_ppd_resolved | length == 0
+
+# ===========================================================================
+# The queue
+# ===========================================================================
+- name: Check whether the queue already exists
+  ansible.builtin.command: lpstat -p {{ printserver_queue }}
+  register: printserver_queue_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Create the CUPS queue
+  ansible.builtin.command:
+    argv:
+      - lpadmin
+      - -p
+      - "{{ printserver_queue }}"
+      - -v
+      - "{{ printserver_uri }}"
+      - -m
+      - "{{ printserver_ppd_resolved }}"
+      - -E
+      - -D
+      - "{{ printserver_description }}"
+      - -L
+      - "{{ printserver_location }}"
+      - -o
+      - printer-is-shared=true
+  when: printserver_queue_check.rc != 0
+
+- name: Make it the server default
+  ansible.builtin.command: lpadmin -d {{ printserver_queue }}
+  when: printserver_queue_check.rc != 0
+
+- name: Ensure the queue is enabled and accepting jobs
+  ansible.builtin.command: "{{ item }} {{ printserver_queue }}"
+  loop:
+    - cupsenable
+    - cupsaccept
+  when: printserver_queue_check.rc != 0
+       or 'disabled' in printserver_queue_check.stdout
+       or 'not accepting' in printserver_queue_check.stdout
+
+# ===========================================================================
+# Print defaults -- what every AirPrint/Mopria client gets, because phones
+# cannot set vendor options themselves.
+# ===========================================================================
+- name: Read the queue's current option defaults
+  ansible.builtin.command: lpoptions -p {{ printserver_queue }} -l
+  register: printserver_opts
+  changed_when: false
+  check_mode: false
+
+- name: Apply print option defaults
+  ansible.builtin.command:
+    argv:
+      - lpadmin
+      - -p
+      - "{{ printserver_queue }}"
+      - -o
+      - "{{ item.key }}={{ item.value }}"
+  loop: "{{ printserver_print_defaults | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  when: (printserver_opts.stdout_lines
+         | select('match', '^' ~ item.key ~ '/') | list | first | default(''))
+        is not search('\*' ~ (item.value | string | regex_escape) ~ '(\s|$)')
+
+# ===========================================================================
+# Wifi power saving
+# ===========================================================================
+- name: Install the wifi power-save-off unit
+  ansible.builtin.template:
+    src: wifi-powersave-off.service.j2
+    dest: /etc/systemd/system/wifi-powersave-off.service
+    owner: root
+    group: root
+    mode: "0644"
+  when: printserver_disable_wifi_powersave
+  notify: Restart wifi-powersave-off
+
+- name: Enable and start the wifi power-save-off unit
+  ansible.builtin.systemd:
+    name: wifi-powersave-off
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: printserver_disable_wifi_powersave

@@ -1,0 +1,31 @@
+---
+# Overrides for the printserver role. Every available variable, with its
+# default, is documented in roles/printserver/defaults/main.yml.
+#
+# WARNING: do NOT put ansible_become_pass here in plain text. Use
+# --ask-become-pass, or an ansible-vault encrypted file (see .gitignore).
+
+# --- Lighter printing / save toner -----------------------------------------
+# Phones cannot set these themselves: AirPrint and Mopria have no access to
+# vendor options, and this printer advertises only print-quality=normal. The
+# server default is what every phone gets.
+#
+# printserver_print_defaults:
+#   PageSize: A4
+#   Resolution: 600dpi          # 600 = lighter and faster; 1200 = denser
+#   brlaserEconomode: "True"    # toner save
+#   Duplex: DuplexNoTumble      # 2-sided, long edge
+#   MediaType: PLAIN
+
+# --- A different printer ----------------------------------------------------
+# printserver_queue: Brother_HL-L2350DW
+# printserver_ppd_match: "Brother HL-L2350DW series"
+
+# --- Pin one printer when several are attached ------------------------------
+# printserver_device_uri: "usb://Brother/HL-L2310D%20series?serial=XXXXXXXXXXXXXXX"
+
+# --- Ethernet-only Pi: skip the wifi power-save unit ------------------------
+# printserver_disable_wifi_powersave: false
+
+# --- Print a test page during the verify stage ------------------------------
+# printserver_test_page: true

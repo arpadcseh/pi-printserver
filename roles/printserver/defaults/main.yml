@@ -1,0 +1,75 @@
+---
+# ---------------------------------------------------------------------------
+# Packages
+# ---------------------------------------------------------------------------
+printserver_packages:
+  - cups                    # the print server itself (IPP)
+  - cups-filters            # PDF -> raster pipeline AirPrint/Mopria rely on
+  - printer-driver-brlaser  # open-source driver for host-based Brother lasers
+  - avahi-daemon            # mDNS/Bonjour: this is what makes AirPrint work
+  - avahi-utils             # avahi-browse, used by the verify tasks
+  - iw                      # needed to turn off wifi power saving
+
+# ---------------------------------------------------------------------------
+# Printer identity
+# ---------------------------------------------------------------------------
+printserver_queue: Brother_HL-L2312D
+printserver_description: Brother HL-L2312D
+printserver_location: Home
+
+# Leave empty to auto-discover from `lpinfo -v`. Set explicitly to pin one
+# printer when several are attached, e.g.
+#   usb://Brother/HL-L2310D%20series?serial=XXXXXXXXXXXXXXX
+printserver_device_uri: ""
+
+# Substring used to pick the USB URI out of `lpinfo -v`.
+printserver_usb_uri_match: "usb://Brother"
+
+# Leave empty to auto-resolve the PPD from `lpinfo -m`. The HL-L2312D
+# enumerates over USB as "HL-L2310D series", so that is what we match on.
+printserver_ppd: ""
+printserver_ppd_match: "Brother HL-L2310D series"
+
+# ---------------------------------------------------------------------------
+# Print defaults (PPD option names, exactly as `lpoptions -p <queue> -l`
+# prints them). These are what phones get: AirPrint and Mopria cannot set
+# vendor options themselves, so the server default is the only lever.
+# ---------------------------------------------------------------------------
+printserver_print_defaults:
+  PageSize: A4
+  Resolution: 1200dpi        # 600dpi = lighter and faster
+  brlaserEconomode: "False"  # "True" = toner save (noticeably lighter)
+  Duplex: None               # DuplexNoTumble = 2-sided, long edge
+  MediaType: PLAIN
+
+# ---------------------------------------------------------------------------
+# cupsd settings. The two lists must correspond: *_args is what we run,
+# *_expect is what `cupsctl` prints back once it has taken effect.
+# ---------------------------------------------------------------------------
+printserver_cupsctl_args:
+  - --share-printers
+  - --remote-admin
+  - WebInterface=yes
+  - ServerAlias=*
+printserver_cupsctl_expect:
+  - _share_printers=1
+  - _remote_admin=1
+  - WebInterface=yes
+  - ServerAlias=*
+
+# User added to the lpadmin group so it can administer CUPS over the web UI.
+# Empty string disables this.
+printserver_admin_user: "{{ ansible_user | default('pi') }}"
+
+# ---------------------------------------------------------------------------
+# Wifi power saving. On by default on the Pi's wifi chip, which makes the Pi
+# slow to answer mDNS, so phones intermittently fail to find the printer.
+# ---------------------------------------------------------------------------
+printserver_disable_wifi_powersave: true
+printserver_wifi_interface: wlan0
+
+# Print a CUPS test page at the end of a run. Off by default: it costs paper.
+printserver_test_page: false
+
+# USB vendor id used by the verify tasks (04f9 = Brother Industries).
+printserver_usb_vendor_id: "04f9"

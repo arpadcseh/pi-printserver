@@ -1,0 +1,13 @@
+---
+- name: Restart cups
+  ansible.builtin.systemd:
+    name: cups
+    state: restarted
+  listen: Restart cups
+
+- name: Restart wifi-powersave-off
+  ansible.builtin.systemd:
+    name: wifi-powersave-off
+    state: restarted
+    daemon_reload: true
+  listen: Restart wifi-powersave-off

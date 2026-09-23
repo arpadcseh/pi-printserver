@@ -1,0 +1,20 @@
+---
+- name: Raspberry Pi USB -> AirPrint/Mopria print server
+  hosts: printservers
+  become: true
+
+  # lpadmin, lpinfo, cupsctl, cupsenable and iw all live in /usr/sbin, which
+  # is not on the PATH for a non-login shell. Without this, every one of them
+  # fails with "command not found".
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  roles:
+    - role: printserver
+
+  post_tasks:
+    - name: Verify the finished setup
+      ansible.builtin.include_role:
+        name: printserver
+        tasks_from: verify.yml
+      tags: [verify]

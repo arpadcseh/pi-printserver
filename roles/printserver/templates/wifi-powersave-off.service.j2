@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Disable WiFi power saving on {{ printserver_wifi_interface }} (keeps mDNS/AirPrint discovery responsive)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/iw dev {{ printserver_wifi_interface }} set power_save off
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
